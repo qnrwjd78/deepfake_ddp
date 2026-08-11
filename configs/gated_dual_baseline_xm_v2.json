@@ -72,14 +72,15 @@
                 {
                     "name": "new_benchmark_2",
                     "frames": "data_precrop/newbench_2/train/frames",
-                    "labels": "data_precrop/newbench_2/labels.csv"
+                    "labels": "data_precrop/newbench_2/labels.csv",
+                    "fake_only": true
                 }
             ]
         }
     ],
     "expected_xm_layout": {
         "source_count": 9,
-        "real_frames": 26037,
+        "real_frames": 16564,
         "fake_source_frames": [
             5499,
             5731,

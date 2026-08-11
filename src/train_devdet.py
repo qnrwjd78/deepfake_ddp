@@ -1,7 +1,7 @@
 """Four-stage DevDet-style training entry point.
 
 Stages:
-  select      score training frames and select hard-fake/easy-real for FFDev
+  select      score training frames and build a balanced FFDev selection
   train-ffdev train the frozen-detector reconstruction generator
   fit-dict    extract hard-fake fused features and fit DoseDict
   train-daft  freeze FFDev/DoseDict and fine-tune GatedDual
@@ -353,6 +353,162 @@ def domain_matched_selection(scored: pd.DataFrame, selection: dict, seed: int):
     return selected, audit
 
 
+def adaptive_threshold_selection(scored: pd.DataFrame, selection: dict, seed: int):
+    """Build a balanced FFDev set from threshold-derived counts.
+
+    Every fake whose true-class confidence is below ``threshold`` is selected.
+    Each domain first contributes its hardest eligible real samples.  Any real
+    shortfall is then filled from the configured baseline-real domains by
+    ascending p_real (equivalently descending p_fake).  This keeps NB2
+    fake-only while avoiding checkpoint-specific, hard-coded sample counts.
+    """
+    threshold = float(selection["threshold"])
+    if not 0.0 < threshold < 1.0:
+        raise ValueError(f"selection.threshold must be in (0,1), got {threshold}")
+
+    domain_specs = selection.get("domains")
+    if not isinstance(domain_specs, dict) or not domain_specs:
+        raise ValueError("selection.domains must be a non-empty mapping")
+    domains = list(domain_specs)
+    fallback_domains = list(selection.get("real_fallback_domains", []))
+    excluded_real_domains = set(selection.get("excluded_real_domains", []))
+    if not fallback_domains:
+        raise ValueError("selection.real_fallback_domains must not be empty")
+    unknown = (set(fallback_domains) | excluded_real_domains) - set(domains)
+    if unknown:
+        raise ValueError(
+            f"Adaptive selection references unknown domains: {sorted(unknown)}"
+        )
+    overlap = set(fallback_domains) & excluded_real_domains
+    if overlap:
+        raise ValueError(
+            "Real fallback domains cannot also be excluded: "
+            f"{sorted(overlap)}"
+        )
+    unexpected = set(scored["dataset"]) - set(domains)
+    if unexpected:
+        raise ValueError(f"Unexpected selection domains: {sorted(unexpected)}")
+    excluded_real = scored[
+        (scored["label"] == 0)
+        & scored["dataset"].isin(excluded_real_domains)
+    ]
+    if not excluded_real.empty:
+        raise RuntimeError(
+            "Excluded real domains reached adaptive selection; filter them before scoring"
+        )
+
+    real_hard_cutoff = 1.0 - threshold
+    fake_pieces = []
+    real_pieces = []
+    selected_real_indices: set[int] = set()
+    audit = {}
+    total_fake = 0
+    total_shortfall = 0
+
+    for domain in domains:
+        group = scored[scored["dataset"] == domain]
+        if group.empty:
+            raise ValueError(f"Selection domain has no scored samples: {domain}")
+
+        fake = group[
+            (group["label"] == 1) & (group["p_fake"] < threshold)
+        ].copy()
+        fake["_stable_hash"] = [
+            stable_sample_hash(row, seed) for row in fake.itertuples()
+        ]
+        fake = fake.sort_values(
+            ["p_fake", "_stable_hash"], ascending=[True, True], kind="mergesort"
+        )
+        fake["selection_role"] = "hard_fake"
+        fake["selection_is_hard"] = True
+        fake["selection_fill"] = "threshold"
+        fake_pieces.append(fake)
+        fake_count = len(fake)
+        total_fake += fake_count
+
+        if domain in excluded_real_domains:
+            real_pool = group.iloc[0:0].copy()
+        else:
+            real_pool = group[
+                (group["label"] == 0) & (group["p_fake"] > real_hard_cutoff)
+            ].copy()
+        real_pool["_stable_hash"] = [
+            stable_sample_hash(row, seed) for row in real_pool.itertuples()
+        ]
+        real_pool = real_pool.sort_values(
+            ["p_fake", "_stable_hash"],
+            ascending=[False, True],
+            kind="mergesort",
+        )
+        selected_real = real_pool.head(fake_count).copy()
+        selected_real["selection_role"] = "selected_real"
+        selected_real["selection_is_hard"] = True
+        selected_real["selection_fill"] = "same_domain_threshold"
+        real_pieces.append(selected_real)
+        selected_real_indices.update(int(index) for index in selected_real.index)
+
+        shortfall = fake_count - len(selected_real)
+        total_shortfall += shortfall
+        audit[domain] = {
+            "fake_below_threshold": int(fake_count),
+            "fake_selected": int(fake_count),
+            "real_total": int((group["label"] == 0).sum()),
+            "real_hard_rule": f"p_real < {threshold} (p_fake > {real_hard_cutoff})",
+            "real_hard_candidates": int(len(real_pool)),
+            "real_hard_selected": int(len(selected_real)),
+            "real_target_quota": int(fake_count),
+            "real_shortfall": int(shortfall),
+            "real_fallback_extra": 0,
+            "real_selected": int(len(selected_real)),
+        }
+
+    if total_fake == 0:
+        raise RuntimeError(
+            f"No hard fake samples found below threshold {threshold}"
+        )
+
+    fallback = scored[
+        (scored["label"] == 0)
+        & scored["dataset"].isin(fallback_domains)
+        & ~scored.index.isin(selected_real_indices)
+    ].copy()
+    fallback["_stable_hash"] = [
+        stable_sample_hash(row, seed) for row in fallback.itertuples()
+    ]
+    # Lowest p_real first is identical to highest p_fake first.
+    fallback = fallback.sort_values(
+        ["p_fake", "_stable_hash"],
+        ascending=[False, True],
+        kind="mergesort",
+    )
+    fallback = fallback.head(total_shortfall).copy()
+    if len(fallback) != total_shortfall:
+        raise RuntimeError(
+            "Original training real pool cannot supply the adaptive shortfall: "
+            f"needed {total_shortfall}, found {len(fallback)}"
+        )
+    fallback["selection_role"] = "selected_real"
+    fallback["selection_is_hard"] = fallback["p_fake"] > real_hard_cutoff
+    fallback["selection_fill"] = "global_lowest_p_real"
+    real_pieces.append(fallback)
+
+    for domain, count in fallback["dataset"].value_counts().items():
+        audit[domain]["real_fallback_extra"] = int(count)
+        audit[domain]["real_selected"] += int(count)
+
+    selected = pd.concat(fake_pieces + real_pieces, ignore_index=True)
+    selected = selected.drop(columns=["_stable_hash"], errors="ignore")
+    keys = ["dataset", "video_id", "frame_id"]
+    if selected.duplicated(keys).any():
+        raise RuntimeError("Adaptive selection contains duplicate frame keys")
+    real_count = int((selected["selection_role"] == "selected_real").sum())
+    if real_count != total_fake or len(selected) != 2 * total_fake:
+        raise RuntimeError(
+            f"Adaptive selection is not balanced: fake={total_fake}, real={real_count}"
+        )
+    return selected, audit
+
+
 def validate_selection(output: Path, recipe: dict, checkpoint: Path) -> None:
     filename = output / "selection.json"
     if not filename.is_file():
@@ -368,7 +524,11 @@ def validate_selection(output: Path, recipe: dict, checkpoint: Path) -> None:
 
 def validate_ffdev_manifest(records: pd.DataFrame, recipe: dict) -> None:
     selection = recipe.get("selection", {})
-    if selection.get("mode", "legacy_global") != "domain_matched_threshold_v1":
+    selection_mode = selection.get("mode", "legacy_global")
+    if selection_mode not in {
+        "domain_matched_threshold_v1",
+        "adaptive_threshold_balanced_v1",
+    }:
         return
     required = {
         "dataset", "video_id", "frame_id", "label", "p_fake", "selection_role",
@@ -380,6 +540,56 @@ def validate_ffdev_manifest(records: pd.DataFrame, recipe: dict) -> None:
         raise RuntimeError("FFDev selection manifest contains duplicate frame keys")
 
     threshold = float(selection["threshold"])
+    if selection_mode == "adaptive_threshold_balanced_v1":
+        if "selection_fill" not in records:
+            raise RuntimeError(
+                "Adaptive FFDev manifest lacks the selection_fill column"
+            )
+        fake = records[records["selection_role"] == "hard_fake"]
+        real = records[records["selection_role"] == "selected_real"]
+        unexpected_roles = set(records["selection_role"]) - {
+            "hard_fake", "selected_real"
+        }
+        if unexpected_roles:
+            raise RuntimeError(
+                f"Adaptive manifest has unexpected roles: {sorted(unexpected_roles)}"
+            )
+        if len(fake) != len(real) or not len(fake):
+            raise RuntimeError(
+                f"Adaptive manifest must be non-empty and balanced, got "
+                f"fake={len(fake)} real={len(real)}"
+            )
+        if not (fake["label"] == 1).all() or not (
+            fake["p_fake"] < threshold
+        ).all():
+            raise RuntimeError(
+                f"Adaptive hard-fake rows must have label=1 and p_fake < {threshold}"
+            )
+        if not (real["label"] == 0).all():
+            raise RuntimeError("Adaptive selected-real rows must have label=0")
+        excluded = set(selection.get("excluded_real_domains", []))
+        forbidden = set(real["dataset"]) & excluded
+        if forbidden:
+            raise RuntimeError(
+                f"Adaptive selected-real rows include excluded domains: {sorted(forbidden)}"
+            )
+        fallback = real[real["selection_fill"] == "global_lowest_p_real"]
+        allowed_fallback = set(selection.get("real_fallback_domains", []))
+        invalid_fallback = set(fallback["dataset"]) - allowed_fallback
+        if invalid_fallback:
+            raise RuntimeError(
+                "Adaptive fallback real rows came from disallowed domains: "
+                f"{sorted(invalid_fallback)}"
+            )
+        same_domain = real[
+            real["selection_fill"] == "same_domain_threshold"
+        ]
+        if not (same_domain["p_fake"] > 1.0 - threshold).all():
+            raise RuntimeError(
+                "Adaptive same-domain real rows must satisfy the hard-real threshold"
+            )
+        return
+
     fallback_domain = selection["real_shortfall_domain"]
     expected_real_counts = {}
     total_shortfall = 0
@@ -446,22 +656,43 @@ def select_stage(args) -> None:
     device = device_from(args)
     selection = recipe.get("selection", {})
     selection_mode = str(selection.get("mode", "legacy_global"))
-    if selection_mode == "domain_matched_threshold_v1":
+    threshold_modes = {
+        "domain_matched_threshold_v1",
+        "adaptive_threshold_balanced_v1",
+    }
+    if selection_mode in threshold_modes:
         records = discover_selection_records(cfg, recipe)
+        if selection_mode == "adaptive_threshold_balanced_v1":
+            domains = set(selection["domains"])
+            records = records[records["dataset"].isin(domains)].copy()
+            excluded_real_domains = set(
+                selection.get("excluded_real_domains", [])
+            )
+            records = records[
+                ~(
+                    (records["label"] == 0)
+                    & records["dataset"].isin(excluded_real_domains)
+                )
+            ].reset_index(drop=True)
     elif selection_mode == "legacy_global":
         records = discover_training_records(cfg, recipe)
     else:
         raise ValueError(f"Unknown selection.mode={selection_mode!r}")
     model = build_model(cfg, checkpoint, device)
     scored = score_records(model, records, int(cfg["image_size"]), args, device)
-    if selection_mode == "domain_matched_threshold_v1":
-        selected, selection_audit = domain_matched_selection(
-            scored, selection, int(recipe.get("seed", 0))
-        )
-        expected_samples = int(recipe["ffdev"]["samples"])
-        if len(selected) != expected_samples:
-            raise RuntimeError(
-                f"ffdev.samples={expected_samples}, but selection produced {len(selected)} frames"
+    if selection_mode in threshold_modes:
+        if selection_mode == "domain_matched_threshold_v1":
+            selected, selection_audit = domain_matched_selection(
+                scored, selection, int(recipe.get("seed", 0))
+            )
+            expected_samples = int(recipe["ffdev"]["samples"])
+            if len(selected) != expected_samples:
+                raise RuntimeError(
+                    f"ffdev.samples={expected_samples}, but selection produced {len(selected)} frames"
+                )
+        else:
+            selected, selection_audit = adaptive_threshold_selection(
+                scored, selection, int(recipe.get("seed", 0))
             )
         scored.to_csv(output / "selection_scores_all.csv", index=False)
         baseline_scored = baseline_training_subset(scored)
@@ -501,7 +732,7 @@ def select_stage(args) -> None:
     }
     (output / "selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"Saved {output / 'baseline_scores.csv'}")
-    if selection_mode == "domain_matched_threshold_v1":
+    if selection_mode in threshold_modes:
         print(f"Saved {output / 'selection_scores_all.csv'}")
         for domain, row in selection_audit.items():
             print(
@@ -618,11 +849,15 @@ def fit_dict_stage(args) -> None:
                 "dictionary.sample_source=ffdev_hard_fake requires a threshold-selection manifest"
             )
         hard_fake = selected[selected["selection_role"] == "hard_fake"].copy()
-        expected = int(dc["hard_fake_samples"])
-        if len(hard_fake) != expected:
-            raise RuntimeError(
-                f"DoseDict expected {expected} selected hard fakes, got {len(hard_fake)}"
-            )
+        expected = dc.get("hard_fake_samples", "auto")
+        if expected not in {None, "auto"}:
+            expected = int(expected)
+            if len(hard_fake) != expected:
+                raise RuntimeError(
+                    f"DoseDict expected {expected} selected hard fakes, got {len(hard_fake)}"
+                )
+        if hard_fake.empty:
+            raise RuntimeError("DoseDict received no selected hard fakes")
         hard_fake = hard_fake.sort_values("p_fake").reset_index(drop=True)
     elif sample_source == "baseline_hardest":
         scored = pd.read_csv(scores_file)

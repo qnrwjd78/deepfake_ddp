@@ -98,19 +98,19 @@ class SBI_Multi_Precrop_XM_Dataset(base.SBI_Multi_Dataset):
         for source_index, source in enumerate(extra_sources or []):
             merged = list(source.get("merged_labeled_sources", []))
             if merged:
-                if source.get("fake_only"):
-                    include_real = False
-                else:
-                    include_real = True
                 merged_real: list[str] = []
                 merged_fake: list[str] = []
                 fake_roots: list[tuple[str, str]] = []
+                real_members: list[str] = []
                 for member_index, member in enumerate(merged):
                     frames = str(member["frames"])
                     labels = str(member["labels"])
                     tag = str(member.get("name", f"member{member_index}"))
                     real_ids, fake_ids = self._labels_split(labels)
-                    if include_real:
+                    include_member_real = not (
+                        source.get("fake_only") or member.get("fake_only")
+                    )
+                    if include_member_real:
                         member_real = base.init_ff(
                             dataset_path=frames,
                             phase=phase,
@@ -122,6 +122,7 @@ class SBI_Multi_Precrop_XM_Dataset(base.SBI_Multi_Dataset):
                         self.xm_extra_real_roots.append(
                             (os.path.realpath(os.path.abspath(frames)), f"extra{source_index}:{tag}")
                         )
+                        real_members.append(tag)
                     member_fake = base.init_ff(
                         dataset_path=frames,
                         n_frames=n_frames,
@@ -139,7 +140,7 @@ class SBI_Multi_Precrop_XM_Dataset(base.SBI_Multi_Dataset):
                 print(
                     f"[extra-merged] {label}: real+{len(merged_real)} "
                     f"fake+{len(merged_fake)}"
-                    f"{' (fake_only)' if source.get('fake_only') else ''}"
+                    f" real_members={real_members or 'none'}"
                 )
                 continue
 
@@ -417,4 +418,3 @@ class SBI_Multi_Precrop_XM_Dataset(base.SBI_Multi_Dataset):
         first[height : height + length, width : width + length] = 0
         if second is not None:
             second[height : height + length, width : width + length] = 0
-

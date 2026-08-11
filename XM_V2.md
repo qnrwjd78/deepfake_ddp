@@ -20,12 +20,13 @@ This is a direct port of the standalone cross-method (XM) training path from
 
 The old `new_benchmark_margin` directory contained both newbench and NB2. In
 v2 they are separate folders, so the XM loader reads both and merges their fake
-lists back into one logical unknown-fake source. Both real classes are kept.
+lists back into one logical unknown-fake source. Newbench1 real is kept, while
+NB2 is fake-only to match the baseline data policy.
 
 Expected parity with the original run:
 
 ```text
-real pool:          26,037
+real pool:          16,564
 fake lists:         [5,499, 5,731, 5,744, 5,742, 5,744, 5,742, 19,041]
 logical sources:    9 = real + SBI + six FF++ fakes + one merged extra fake
 ```

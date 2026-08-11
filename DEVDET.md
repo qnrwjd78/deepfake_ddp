@@ -5,7 +5,7 @@ change `src/model.py`, `src/train_multi.py`, or any existing checkpoint.
 
 ## Pipeline
 
-1. Rank baseline training frames and select hard fake/easy real.
+1. Score baseline training frames and build the configured balanced selection.
 2. Freeze the baseline detector and train the CDA-inspired ResNet-6 FFDev.
 3. Fit DoseDict on 6,000 hard-fake, classifier-preceding gated features.
 4. Freeze FFDev and DoseDict, then fine-tune GatedDual with adaptive doses.
@@ -79,27 +79,27 @@ separate detector, FFDev, DoseDict, and sparse-code cache. Frames are split
 without padding or duplication, and rank 0 restores their original order and
 writes the ALL metrics.
 
-## Strict 0.7 hard-fake ablation
+## Adaptive 0.7/0.9 hard-fake ablations
 
-`configs/devdet_hard07_balanced.json` creates a separate experiment. FFDev
-uses exactly 698 clean aligned frames:
+`configs/devdet_hard07_balanced.json` and
+`configs/devdet_hard09_balanced.json` derive their sample counts from the
+baseline inference scores instead of storing checkpoint-specific counts:
 
-- FF++: 187 hard fake + 16 hard real
-- newbench: 65 hard fake + 65 hard real
-- new_benchmark_2: 97 hard fake + 268 hard real
+- every fake with `p_fake < T` is selected automatically;
+- each domain first contributes real samples with `p_real < T`;
+- NB2 remains fake-only and never contributes real samples;
+- any real shortfall is filled from the original FF++ + newbench real pool,
+  ordered by lowest `p_real` first; and
+- the final FFDev manifest is globally balanced, with equal real/fake counts.
 
 Hardness is symmetric in true-class confidence: fake uses `p_fake < T`, while
-real uses `p_real < T` (equivalently `p_fake > 1-T`). Real frames outside this
-condition are never used. FF++ hard-real shortfall is supplied by additional
-NB2 hard-real frames, keeping the global total at 349 fake + 349 real.
-
-The selector fails if the strict-threshold fake counts differ, rather than
-padding with easy fakes. NB2 real is used only in this FFDev manifest. The
-original DAFT candidate CSV retains the baseline's NB2-fake-only policy. The
-DoseDict is fitted to the selected 349 hard fakes with 64 atoms. Training
-augmentation is disabled. The final DAFT stage uses 20,000 class-balanced
-frames for three epochs and updates only the classifier; the feature encoder
-and gate remain frozen. Every epoch is saved separately.
+real uses `p_real < T` (equivalently `p_fake > 1-T`). If the hard-real pool is
+too small, fallback may cross the threshold, but still takes the remaining
+real samples from hardest to easiest. DoseDict uses every automatically
+selected hard fake with 64 atoms. Training augmentation is disabled. The final
+DAFT stage uses up to 20,000 class-balanced frames for three epochs and updates
+only the classifier; the feature encoder and gate remain frozen. Every epoch
+is saved separately.
 
 ```bash
 CUDA_VISIBLE_DEVICES=4 python src/train_devdet.py select \
@@ -139,7 +139,7 @@ This restores the model, optimizer, AMP scaler, histories, and RNG state, then
 saves epoch 004 and 005. It refuses to overwrite an existing numbered epoch.
 
 Artifacts and ALL evaluation results are written below
-`output/devdet_hard07_balanced/`; existing `output/devdet_gated_dual/`
+`output/devdet_hard07_adaptive/`; existing `output/devdet_gated_dual/`
 artifacts are not reused or overwritten.
 
 Baseline GatedDual comparison using the identical data and aggregation:
@@ -177,7 +177,7 @@ These choices are configurable in `configs/devdet_gated_dual.json` because the
 MID-FFD paper does not disclose their exact values or implementation details.
 
 This three-domain command is a training-domain diagnostic, not an unseen
-cross-dataset result: FF++ train and newbench are reused, NB2 fake was used by
-the baseline and DAFT, and only NB2 real is unseen. Use DFDC/eval2024 or a
+cross-dataset result: FF++ train and newbench are reused, and NB2 fake was used
+by the baseline and DAFT. NB2 real remains excluded. Use DFDC/eval2024 or a
 held-out split for the final generalization comparison. If Stage 1 runs out of
 memory, reduce `ffdev.batch_size` from 4 to 2 or 1.

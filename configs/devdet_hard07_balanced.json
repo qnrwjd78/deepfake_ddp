@@ -1,37 +1,27 @@
 {
-    "_comment": "FFDev/DoseDict ablation using symmetric true-class confidence below 0.7. FF++ real shortfall is supplied by NB2 hard real. Original baseline files are untouched.",
+    "_comment": "Adaptive FFDev/DoseDict selection at true-class confidence 0.7. NB2 is fake-only; real shortfalls are filled from FF++ + newbench by lowest p_real first.",
     "baseline_run": "baseline_gated_dual",
     "baseline_checkpoint": "output/baseline_gated_dual/weights/100.pth",
-    "output_dir": "output/devdet_hard07_balanced",
+    "output_dir": "output/devdet_hard07_adaptive",
     "frames_per_video": 8,
     "training_augmentation": false,
     "seed": 0,
     "selection": {
-        "mode": "domain_matched_threshold_v1",
+        "mode": "adaptive_threshold_balanced_v1",
         "threshold": 0.7,
         "fake_rule": "all_strictly_below_threshold",
-        "real_rule": "p_real_below_threshold_only",
-        "real_shortfall_domain": "new_benchmark_2",
+        "real_rule": "same_domain_below_threshold_then_global_lowest_p_real",
+        "real_fill_order": "lowest_p_real_first",
+        "real_fallback_domains": ["FF++", "newbench"],
+        "excluded_real_domains": ["new_benchmark_2"],
         "domains": {
-            "FF++": {
-                "expected_fake": 187,
-                "expected_hard_real": 16,
-                "real_quota": 187
-            },
-            "newbench": {
-                "expected_fake": 65,
-                "expected_hard_real": 118,
-                "real_quota": 65
-            },
-            "new_benchmark_2": {
-                "expected_fake": 97,
-                "expected_hard_real": 5901,
-                "real_quota": 97
-            }
+            "FF++": {},
+            "newbench": {},
+            "new_benchmark_2": {}
         }
     },
     "ffdev": {
-        "samples": 698,
+        "samples": "auto",
         "hard_fake_fraction": 0.5,
         "base_channels": 64,
         "blocks": 6,
@@ -44,7 +34,7 @@
     },
     "dictionary": {
         "sample_source": "ffdev_hard_fake",
-        "hard_fake_samples": 349,
+        "hard_fake_samples": "auto",
         "feature_batch_size": 64,
         "atoms": 64,
         "lasso_lambda": 0.05,

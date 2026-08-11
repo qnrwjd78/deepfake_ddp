@@ -244,6 +244,13 @@ def main(args):
         raise ValueError(
             "The merged XM source must contain named newbench and new_benchmark_2 members"
         )
+    members_by_name = {
+        str(member.get("name")): member for member in merged_members
+    }
+    if members_by_name["newbench"].get("fake_only"):
+        raise ValueError("XM must keep newbench real samples in the training pool")
+    if not members_by_name["new_benchmark_2"].get("fake_only"):
+        raise ValueError("XM must use new_benchmark_2 as a fake-only member")
 
     dataset = SBI_Multi_XM_V2_Dataset(
         phase="train",
