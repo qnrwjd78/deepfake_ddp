@@ -1,6 +1,12 @@
 # Datasets and generated artifacts
 /data/
-/data_precrop/
+/data_precrop/*
+!/data_precrop/newbench_1/
+/data_precrop/newbench_1/*
+!/data_precrop/newbench_1/labels.csv
+!/data_precrop/newbench_2/
+/data_precrop/newbench_2/*
+!/data_precrop/newbench_2/labels.csv
 /output/
 /.cache/
 
@@ -49,6 +55,7 @@ env/
 Thumbs.db
 
 # Temporary files
+/bad_png_files.txt
 *.tmp
 *.temp
 *.bak

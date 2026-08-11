@@ -48,7 +48,7 @@
     ],
 
     "extra_train_sources": [
-        { "frames": "data_precrop/newbench/train/frames",        "labels": "data/newbench/test/labels.csv" },
-        { "frames": "data_precrop/new_benchmark_2/train/frames",  "labels": "data/new_benchmark_2/labels.csv", "fake_only": true }
+        { "frames": "data_precrop/newbench_1/train/frames", "labels": "data_precrop/newbench_1/labels.csv" },
+        { "frames": "data_precrop/newbench_2/train/frames", "labels": "data_precrop/newbench_2/labels.csv", "fake_only": true }
     ]
 }

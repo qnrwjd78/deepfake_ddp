@@ -20,11 +20,11 @@
 | FF++ | `data/FaceForensics++` (+ `data_precrop`) | train | 풀프레임+lm / 프리크롭 |
 | DFDC | `data/DFDC/test/frames` + labels.csv | **eval 타깃** | 256 크롭 |
 | eval2024 | `eval2024/bench_crops/frames` + labels | **eval 타깃** | 256 크롭 |
-| newbench1 (=nb1) | `data/newbench` (train: `data/newbench/train`, prep됨) | **train** | 풀프레임+lm |
-| newbench2 (=nb2) | `data/new_benchmark_2` | **train**(fake만) | videos→train prep 필요 |
+| newbench1 (=nb1) | `data_precrop/newbench_1` (`train/frames` + `labels.csv`) | **train** | 프리크롭+lm |
+| newbench2 (=nb2) | `data_precrop/newbench_2` (`train/frames` + `labels.csv`) | **train**(fake만) | 프리크롭+lm |
 
 - **nb1/nb2 = newbench1/newbench2** 약칭. nb2의 동료 크롭(256 tight, landmark 없음)은 eval용이라 **학습엔 못 씀** → videos에서 풀프레임+landmark 재전처리 필요.
-- nb2 videos는 real/fake 하위폴더 → `data/new_benchmark_2/train/videos/`에 평탄 심링크 생성해둠(2400개, 라벨매칭 2362).
+- nb2 videos는 real/fake 하위폴더 → `data/newbench_2/train/videos/`에 평탄 심링크 생성해둠(2400개, 라벨매칭 2362).
 
 ## 핵심 결과 (2026-08-03, PRESENT AUC) — SBI 기반
 | run | 모델·데이터 | DFDC | eval2024 | newbench | newbench2 |

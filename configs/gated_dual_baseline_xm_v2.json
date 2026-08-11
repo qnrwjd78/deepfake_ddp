@@ -66,13 +66,13 @@
             "merged_labeled_sources": [
                 {
                     "name": "newbench",
-                    "frames": "data_precrop/newbench/train/frames",
-                    "labels": "data/newbench/test/labels.csv"
+                    "frames": "data_precrop/newbench_1/train/frames",
+                    "labels": "data_precrop/newbench_1/labels.csv"
                 },
                 {
                     "name": "new_benchmark_2",
-                    "frames": "data_precrop/new_benchmark_2/train/frames",
-                    "labels": "data/new_benchmark_2/labels.csv"
+                    "frames": "data_precrop/newbench_2/train/frames",
+                    "labels": "data_precrop/newbench_2/labels.csv"
                 }
             ]
         }

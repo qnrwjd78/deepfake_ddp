@@ -14,6 +14,6 @@
         "data_precrop/FaceForensics++/manipulated_sequences/NeuralTextures/c23/frames"
     ],
     "extra_train_sources": [
-        { "frames": "data/newbench/train/frames", "labels": "data/newbench/test/labels.csv" }
+        { "frames": "data_precrop/newbench_1/train/frames", "labels": "data_precrop/newbench_1/labels.csv" }
     ]
 }
