@@ -1,0 +1,49 @@
+{
+    "model": "gated_dual",
+
+    "epoch": 100,
+    "batch_size": 32,
+    "image_size": 384,
+
+    "global_backbone": "vit_large_patch14_clip_224.openai",
+    "global_finetune": "ln",
+    "global_img_size": 224,
+
+    "local_backbone": "swin_base_patch4_window12_384",
+    "local_finetune": "full",
+    "local_img_size": 384,
+
+    "gate_mode": "gated",
+    "gate_temp": 2.35,
+    "gate_hidden_dim": 256,
+
+    "fft_cutoffs": [0.25, 0.4],
+    "fft_ring_bw": 0.04,
+    "fft_out_dim": 256,
+
+    "optimizer": {
+        "name": "SAM",
+        "rho": 0.05,
+        "base": { "name": "SGD", "lr": 0.001, "momentum": 0.9 }
+    },
+    "scheduler": { "name": "LinearDecayLR" },
+
+    "align_crop": true,
+    "fake_shift": true,
+    "fake_shuffle": true,
+
+    "real_frame_path": "data_precrop/FaceForensics++/original_sequences/youtube/raw/frames",
+    "fake_frame_paths": [
+        "data_precrop/FaceForensics++/manipulated_sequences/SimSwap/raw/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/Deepfakes/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/Face2Face/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/FaceSwap/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/FaceShifter/raw/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/FaceShifter/raw/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/FaceShifter/raw/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/NeuralTextures/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/NeuralTextures/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/NeuralTextures/c23/frames"
+    ]
+}
+

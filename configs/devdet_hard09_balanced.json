@@ -1,0 +1,71 @@
+{
+    "_comment": "FFDev/DoseDict ablation using symmetric true-class confidence below 0.9. FF++ real shortfall is supplied by NB2 hard real. Original baseline files are untouched.",
+    "baseline_run": "baseline_gated_dual",
+    "baseline_checkpoint": "output/baseline_gated_dual/weights/100.pth",
+    "output_dir": "output/devdet_hard09_balanced",
+    "frames_per_video": 8,
+    "training_augmentation": false,
+    "seed": 0,
+    "selection": {
+        "mode": "domain_matched_threshold_v1",
+        "threshold": 0.9,
+        "fake_rule": "all_strictly_below_threshold",
+        "real_rule": "p_real_below_threshold_only",
+        "real_shortfall_domain": "new_benchmark_2",
+        "domains": {
+            "FF++": {
+                "expected_fake": 276,
+                "expected_hard_real": 88,
+                "real_quota": 276
+            },
+            "newbench": {
+                "expected_fake": 96,
+                "expected_hard_real": 243,
+                "real_quota": 96
+            },
+            "new_benchmark_2": {
+                "expected_fake": 135,
+                "expected_hard_real": 6812,
+                "real_quota": 135
+            }
+        }
+    },
+    "ffdev": {
+        "samples": 1014,
+        "hard_fake_fraction": 0.5,
+        "base_channels": 64,
+        "blocks": 6,
+        "dropout": 0.5,
+        "epsilon": 0.25,
+        "lambda_tv": 0.0001,
+        "epochs": 10,
+        "batch_size": 4,
+        "learning_rate": 0.0002
+    },
+    "dictionary": {
+        "sample_source": "ffdev_hard_fake",
+        "hard_fake_samples": 507,
+        "feature_batch_size": 64,
+        "atoms": 64,
+        "lasso_lambda": 0.05,
+        "ista_iterations": 40,
+        "epochs": 20,
+        "batch_size": 128,
+        "learning_rate": 0.1,
+        "l2_normalize": true
+    },
+    "daft": {
+        "enabled": true,
+        "train_scope": "classifier",
+        "save_every_epoch": true,
+        "dose_mode": "scaled",
+        "base_epsilon": 0.25,
+        "max_samples": 20000,
+        "class_balance": true,
+        "epochs": 3,
+        "batch_size": 8,
+        "learning_rate": 0.0001,
+        "momentum": 0.9,
+        "weight_decay": 0.0001
+    }
+}

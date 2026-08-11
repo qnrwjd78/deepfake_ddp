@@ -1,0 +1,43 @@
+{
+    "_comment": "DevDet-style reconstruction. Original model.py/train_multi.py are not modified.",
+    "baseline_run": "baseline_gated_dual",
+    "baseline_checkpoint": "output/baseline_gated_dual/weights/100.pth",
+    "output_dir": "output/devdet_gated_dual",
+    "frames_per_video": 8,
+    "training_augmentation": true,
+    "seed": 0,
+    "ffdev": {
+        "samples": 5000,
+        "hard_fake_fraction": 0.5,
+        "base_channels": 64,
+        "blocks": 6,
+        "dropout": 0.5,
+        "epsilon": 0.25,
+        "lambda_tv": 0.0001,
+        "epochs": 10,
+        "batch_size": 4,
+        "learning_rate": 0.0002
+    },
+    "dictionary": {
+        "hard_fake_samples": 6000,
+        "feature_batch_size": 64,
+        "atoms": 256,
+        "lasso_lambda": 0.05,
+        "ista_iterations": 40,
+        "epochs": 20,
+        "batch_size": 256,
+        "learning_rate": 0.1,
+        "l2_normalize": true
+    },
+    "daft": {
+        "dose_mode": "scaled",
+        "base_epsilon": 0.25,
+        "max_samples": 0,
+        "class_balance": true,
+        "epochs": 10,
+        "batch_size": 8,
+        "learning_rate": 0.0001,
+        "momentum": 0.9,
+        "weight_decay": 0.0001
+    }
+}

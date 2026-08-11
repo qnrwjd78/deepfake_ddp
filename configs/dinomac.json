@@ -1,0 +1,16 @@
+{
+    "_comment": "DINOMAC + on-the-fly SBI, FF++ 6 methods ONLY (no newbench). Data-spec only.",
+    "image_size": 384,
+    "align_crop": true,
+    "fake_shift": true,
+    "fake_shuffle": true,
+    "real_frame_path": "data_precrop/FaceForensics++/original_sequences/youtube/raw/frames",
+    "fake_frame_paths": [
+        "data_precrop/FaceForensics++/manipulated_sequences/SimSwap/raw/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/Deepfakes/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/Face2Face/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/FaceSwap/c23/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/FaceShifter/raw/frames",
+        "data_precrop/FaceForensics++/manipulated_sequences/NeuralTextures/c23/frames"
+    ]
+}

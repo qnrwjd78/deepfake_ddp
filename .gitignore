@@ -1,0 +1,55 @@
+# Datasets and generated artifacts
+/data/
+/data_precrop/
+/output/
+/.cache/
+
+# Model checkpoints and experiment logs
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.safetensors
+*.h5
+*.log
+/runs/
+/wandb/
+/lightning_logs/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments and local environment variables
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
