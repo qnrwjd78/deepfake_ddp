@@ -156,18 +156,32 @@ def process_video(
             failed += 1
             continue
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        detections = model.predict_jsons(rgb)
-        detections = [item for item in detections if "bbox" in item]
-        detections.sort(
-            key=lambda item: (item["bbox"][2] - item["bbox"][0])
-            * (item["bbox"][3] - item["bbox"][1]),
-            reverse=True,
-        )
+        try:
+            raw_detections = model.predict_jsons(rgb)
+        except Exception:
+            failed += 1
+            continue
+        detections = []
+        for item in raw_detections:
+            try:
+                bbox = np.asarray(item.get("bbox", []), dtype=np.float32).reshape(-1)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if (
+                bbox.size != 4
+                or not np.isfinite(bbox).all()
+                or bbox[2] <= bbox[0]
+                or bbox[3] <= bbox[1]
+            ):
+                continue
+            area = float((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
+            detections.append((area, bbox))
+        detections.sort(key=lambda pair: pair[0], reverse=True)
         if not detections:
             failed += 1
             continue
-        for face_index, detection in enumerate(detections[:max_faces]):
-            crop = square_crop(bgr, detection["bbox"], crop_scale, image_size)
+        for face_index, (_, bbox) in enumerate(detections[:max_faces]):
+            crop = square_crop(bgr, bbox, crop_scale, image_size)
             if crop is None:
                 continue
             destination = output / f"{int(frame_index):06d}_{face_index:02d}.png"

@@ -32,11 +32,14 @@ logical sources:    9 = real + SBI + six FF++ fakes + one merged extra fake
 ```
 
 XM batching is planned at the global-batch level under DDP. With the default
-global batch of 40 and nine logical sources, the loader obtains five candidate
-items per rank, assigns four examples to every source (36 total), assigns the
-remaining four positions to four randomly selected sources, and then gives
-each of four GPUs ten examples. Thus every global batch has per-source counts
-of four or five instead of four unrelated local balancing decisions.
+global batch of 40 and nine logical sources, all ranks share the same five
+anchor indices and therefore the same logical pool of 45 source candidates.
+The planner assigns four examples to every source (36 total), assigns the
+remaining four positions to four randomly selected sources, and gives each of
+four GPUs a disjoint 10-example shard. Every global batch therefore has
+per-source counts of four or five. The anchor loader is deliberately not
+sharded by `DistributedSampler`, so an epoch has the same number of optimizer
+updates regardless of GPU count.
 
 The loader accepts crop-local `(81,2)` or `(1,81,2)` landmarks and never
 requires Retina files.

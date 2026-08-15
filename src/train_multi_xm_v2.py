@@ -29,7 +29,6 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 from model_xm import GatedDualDetectorXM
@@ -364,18 +363,6 @@ def main(args):
             f"XM v2 data verified: real={len(dataset)} "
             f"fake_sources={actual_fake_lengths} source_count={source_count}"
         )
-    if ddp:
-        sampler = DistributedSampler(
-            dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True,
-            seed=seed,
-            drop_last=True,
-        )
-    else:
-        sampler = None
-
     cpu_total = os.cpu_count() or 8
     jobs_per_node = max(1, int(os.environ.get("TRAIN_JOBS_PER_NODE", "1")))
     default_workers = max(4, min(12, (cpu_total - 4) // jobs_per_node))
@@ -386,14 +373,16 @@ def main(args):
         print(
             f"DataLoader workers={num_workers}, sources={source_count}, "
             f"items_per_loader_batch={(global_batch - 1) // source_count + 1} "
-            "(global source-aware selection)"
+            "(shared global candidate plan across ranks)"
         )
 
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=(global_batch - 1) // source_count + 1,
-        shuffle=sampler is None,
-        sampler=sampler,
+        # Every rank intentionally receives the same five anchor indices.
+        # Collation builds the same 45 logical source candidates and returns
+        # only that rank's disjoint 10-sample shard of the selected global 40.
+        shuffle=True,
         generator=generator,
         collate_fn=make_collate_xm(
             global_batch,
@@ -501,8 +490,6 @@ def main(args):
     for epoch in range(start_epoch, epochs):
         epoch_start = time.perf_counter()
         generator.manual_seed(seed + epoch)
-        if sampler is not None:
-            sampler.set_epoch(epoch)
         if cfg["fake_shuffle"]:
             dataset.shuffle()
         model.train(True)
