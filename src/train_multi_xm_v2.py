@@ -85,31 +85,83 @@ def _stack_meta(fake_meta, real_meta):
     return stacked.reshape(-1, stacked.shape[-1])
 
 
-def _balanced_selection(sources, item_batch, target_batch):
+def _balanced_selection(
+    sources,
+    item_batch,
+    target_batch,
+    *,
+    rank=0,
+    world_size=1,
+    generator=None,
+):
+    """Plan one source-aware *global* batch and return this rank's shard.
+
+    A loader item contains one example from every source.  We first allocate
+    ``global_batch // sources`` examples to every source, then assign one
+    additional example to a random subset of sources for the remainder.
+    Finally, the shared plan is shuffled and split evenly across DDP ranks.
+
+    For the v2 recipe (global batch 40, 9 sources), every rank loads five
+    candidate items.  The resulting global batch contains four examples from
+    every source (36 total) plus one extra example from four randomly chosen
+    sources, then each of four ranks receives ten examples.
+    """
+    sources = int(sources)
+    item_batch = int(item_batch)
+    target_batch = int(target_batch)
+    rank = int(rank)
+    world_size = int(world_size)
+    if sources <= 0 or item_batch <= 0 or target_batch <= 0:
+        raise ValueError("sources, item_batch, and target_batch must be positive")
+    if world_size <= 0 or not 0 <= rank < world_size:
+        raise ValueError(f"invalid DDP rank/world pair: {rank}/{world_size}")
+    if target_batch % world_size:
+        raise ValueError(
+            f"global batch {target_batch} must be divisible by world size {world_size}"
+        )
+    if target_batch < sources:
+        raise ValueError(
+            f"global batch {target_batch} cannot include all {sources} sources"
+        )
+
     labels = torch.arange(sources).repeat_interleave(item_batch)
     total = sources * item_batch
-    if total == target_batch:
-        return labels, torch.arange(total)
+    if total < target_batch:
+        raise ValueError(
+            f"candidate pool has {total} samples, fewer than global batch {target_batch}"
+        )
 
     base = target_batch // sources
-    remainder = target_batch - base * sources
-    take_per_source = [
-        base + (1 if source < remainder else 0) for source in range(sources)
-    ]
-    random.shuffle(take_per_source)
+    remainder = target_batch % sources
+    if base > item_batch:
+        raise ValueError(
+            f"need {base} candidates per source, but loader provides {item_batch}"
+        )
 
+    extra_sources = torch.randperm(sources, generator=generator)[:remainder]
+    take_per_source = torch.full((sources,), base, dtype=torch.long)
+    take_per_source[extra_sources] += 1
     selected = []
     for source in range(sources):
-        source_indices = (labels == source).nonzero(as_tuple=False).view(-1)
-        count = take_per_source[source]
-        if count:
-            perm = torch.randperm(source_indices.numel())[:count]
-            selected.append(source_indices.index_select(0, perm))
-    selected = torch.cat(selected, dim=0)
-    return labels, selected
+        source_indices = torch.arange(
+            source * item_batch, (source + 1) * item_batch
+        )
+        source_indices = source_indices[
+            torch.randperm(item_batch, generator=generator)
+        ]
+        selected.append(source_indices[: int(take_per_source[source])])
+    selected = torch.cat(selected)
+    selected = selected[
+        torch.randperm(selected.numel(), generator=generator)
+    ]
+    local_batch = target_batch // world_size
+    start = rank * local_batch
+    return labels, selected[start : start + local_batch]
 
 
-def make_collate_xm(batch_size, dual_view=False):
+def make_collate_xm(batch_size, dual_view=False, *, rank=0, world_size=1):
+    batch_counters = {}
+
     def collate(batch):
         if dual_view:
             img_fs, img_r, img_ws, img_rw, meta_fs, meta_r = zip(*batch)
@@ -118,7 +170,24 @@ def make_collate_xm(batch_size, dual_view=False):
 
         images, sources, item_batch = _stack_images(img_fs, img_r)
         metadata = _stack_meta(meta_fs, meta_r)
-        labels, selected = _balanced_selection(sources, item_batch, batch_size)
+        worker = torch.utils.data.get_worker_info()
+        worker_id = worker.id if worker is not None else -1
+        batch_index = batch_counters.get(worker_id, 0)
+        batch_counters[worker_id] = batch_index + 1
+        # Keep the source plan identical across ranks even if data transforms
+        # consume different amounts of the worker's default torch RNG.
+        planner = torch.Generator(device="cpu")
+        planner.manual_seed(
+            (torch.initial_seed() + batch_index * 0x9E3779B1) % (2**63 - 1)
+        )
+        labels, selected = _balanced_selection(
+            sources,
+            item_batch,
+            batch_size,
+            rank=rank,
+            world_size=world_size,
+            generator=planner,
+        )
 
         if images.shape[0] != metadata.shape[0] or images.shape[0] != labels.shape[0]:
             raise RuntimeError(
@@ -162,7 +231,8 @@ def main(args):
     seed = args.seed
     cfg["seed"] = seed
     cfg["label_smoothing"] = args.label_smoothing
-    cfg["xm_schema_version"] = 1
+    cfg["xm_schema_version"] = 2
+    cfg["xm_batching"] = "global_even_random_remainder_v1"
     set_seed(seed)
 
     if not torch.cuda.is_available():
@@ -315,17 +385,21 @@ def main(args):
     if is_main:
         print(
             f"DataLoader workers={num_workers}, sources={source_count}, "
-            f"items_per_loader_batch={(local_batch - 1) // source_count + 1}"
+            f"items_per_loader_batch={(global_batch - 1) // source_count + 1} "
+            "(global source-aware selection)"
         )
 
     loader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=(local_batch - 1) // source_count + 1,
+        batch_size=(global_batch - 1) // source_count + 1,
         shuffle=sampler is None,
         sampler=sampler,
         generator=generator,
         collate_fn=make_collate_xm(
-            local_batch, dual_view=cfg.get("dual_view", False)
+            global_batch,
+            dual_view=cfg.get("dual_view", False),
+            rank=rank,
+            world_size=world_size,
         ),
         num_workers=num_workers,
         pin_memory=True,

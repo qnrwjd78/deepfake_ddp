@@ -651,9 +651,56 @@ def score_records(model, records, image_size, args, device) -> pd.DataFrame:
     return result
 
 
+def load_selection_scores(filename: Path, records: pd.DataFrame) -> pd.DataFrame:
+    """Attach cached baseline probabilities to the currently discovered frames."""
+    key_columns = ["dataset", "video_id", "frame_id"]
+    cached = pd.read_csv(
+        filename,
+        dtype={column: "string" for column in key_columns},
+    )
+    required = set(key_columns) | {"p_fake"}
+    missing = required - set(cached.columns)
+    if missing:
+        raise ValueError(
+            f"Selection score CSV lacks required columns: {sorted(missing)}"
+        )
+    cached = cached[key_columns + ["p_fake"]].copy()
+    if cached.duplicated(key_columns).any():
+        examples = cached.loc[
+            cached.duplicated(key_columns, keep=False), key_columns
+        ].head(10).to_dict("records")
+        raise ValueError(f"Selection score CSV contains duplicate frame keys: {examples}")
+    cached["p_fake"] = pd.to_numeric(cached["p_fake"], errors="raise")
+    probabilities = cached["p_fake"].to_numpy(np.float64)
+    if not np.isfinite(probabilities).all() or ((probabilities < 0) | (probabilities > 1)).any():
+        raise ValueError("Selection score CSV p_fake values must be finite and within [0, 1]")
+
+    current = records.copy()
+    for column in key_columns:
+        current[column] = current[column].astype("string")
+    current_keys = current[key_columns]
+    comparison = current_keys.merge(
+        cached[key_columns], on=key_columns, how="outer", indicator=True,
+        validate="one_to_one",
+    )
+    if not (comparison["_merge"] == "both").all():
+        missing_from_cache = comparison[comparison["_merge"] == "left_only"]
+        extra_in_cache = comparison[comparison["_merge"] == "right_only"]
+        raise ValueError(
+            "Selection score CSV does not match the current selection candidates: "
+            f"missing={len(missing_from_cache)}, extra={len(extra_in_cache)}; "
+            f"missing examples={missing_from_cache[key_columns].head(5).to_dict('records')}; "
+            f"extra examples={extra_in_cache[key_columns].head(5).to_dict('records')}"
+        )
+
+    result = current.merge(
+        cached, on=key_columns, how="left", sort=False, validate="one_to_one"
+    )
+    return result.reset_index(drop=True)
+
+
 def select_stage(args) -> None:
     recipe, cfg, baseline_cfg, checkpoint, output = resolve_setup(args)
-    device = device_from(args)
     selection = recipe.get("selection", {})
     selection_mode = str(selection.get("mode", "legacy_global"))
     threshold_modes = {
@@ -678,8 +725,27 @@ def select_stage(args) -> None:
         records = discover_training_records(cfg, recipe)
     else:
         raise ValueError(f"Unknown selection.mode={selection_mode!r}")
-    model = build_model(cfg, checkpoint, device)
-    scored = score_records(model, records, int(cfg["image_size"]), args, device)
+    if args.selection_scores:
+        score_source = path(args.selection_scores)
+        if not score_source.is_file():
+            raise FileNotFoundError(f"Selection score CSV not found: {score_source}")
+        scored = load_selection_scores(score_source, records)
+        scoring_metadata = {
+            "mode": "reused",
+            "source": str(score_source),
+            "samples": len(scored),
+        }
+        print(f"Reused baseline scores from {score_source} ({len(scored)} frames)")
+    else:
+        device = device_from(args)
+        model = build_model(cfg, checkpoint, device)
+        scored = score_records(model, records, int(cfg["image_size"]), args, device)
+        scoring_metadata = {
+            "mode": "inference",
+            "amp": args.amp,
+            "batch_size": int(args.batch_size),
+            "image_size": int(cfg["image_size"]),
+        }
     if selection_mode in threshold_modes:
         if selection_mode == "domain_matched_threshold_v1":
             selected, selection_audit = domain_matched_selection(
@@ -724,10 +790,7 @@ def select_stage(args) -> None:
         "nb2_real_scope": (
             "ffdev_only" if selection_mode == "domain_matched_threshold_v1" else "excluded"
         ),
-        "scoring": {
-            "amp": args.amp, "batch_size": int(args.batch_size),
-            "image_size": int(cfg["image_size"]),
-        },
+        "scoring": scoring_metadata,
         "selection_audit": selection_audit, "recipe": recipe,
     }
     (output / "selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -1132,6 +1195,13 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=64, help="select-stage batch size")
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument(
+        "--selection-scores",
+        help=(
+            "select only: reuse p_fake values from an existing selection_scores_all.csv "
+            "instead of running baseline inference"
+        ),
+    )
+    parser.add_argument(
         "--resume", nargs="?", const="latest",
         help="train-daft only: checkpoint path, or omit the value to use latest",
     )
@@ -1144,6 +1214,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.stage != "select" and args.selection_scores:
+        raise ValueError("--selection-scores is only valid for the select stage")
     if args.stage != "train-daft" and (args.resume or args.additional_epochs is not None):
         raise ValueError("--resume/--additional-epochs are only valid for train-daft")
     recipe = read_json(path(args.devdet_config))

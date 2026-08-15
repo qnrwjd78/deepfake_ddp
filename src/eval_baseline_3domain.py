@@ -330,41 +330,36 @@ def discover_combined_labeled_source(
 def discover_all(cfg: dict, ff_split: str, frames_per_video: int) -> tuple[pd.DataFrame, dict]:
     extra = cfg.get("extra_train_sources", [])
     if len(extra) < 2:
-        raise ValueError("Config must contain newbench and new_benchmark_2 extra_train_sources")
+        raise ValueError("Config must contain newbench_1 and newbench_2 extra_train_sources")
 
+    dataset_names = {
+        "newbench_1": "newbench",
+        "newbench_2": "new_benchmark_2",
+    }
     by_name: dict[str, dict] = {}
     for source in extra:
-        frame_text = str(source.get("frames", ""))
-        if "new_benchmark_2" in frame_text:
-            by_name["new_benchmark_2"] = source
-        elif "newbench" in frame_text or "new_benchmark" in frame_text:
-            by_name["newbench"] = source
+        frame_root = Path(source.get("frames", ""))
+        for dataset_dir, domain in dataset_names.items():
+            if dataset_dir in frame_root.parts:
+                by_name[domain] = source
+                break
     missing_sources = {"newbench", "new_benchmark_2"} - set(by_name)
     if missing_sources:
-        raise ValueError(f"Could not identify extra sources in config: {sorted(missing_sources)}")
+        raise ValueError(
+            "Could not identify newbench_1/newbench_2 sources in config: "
+            f"{sorted(missing_sources)}"
+        )
 
     records, ff_path_audit = discover_ffpp(cfg, ff_split, frames_per_video)
     audit: dict = {"FF++": {"split": ff_split, "paths": ff_path_audit}}
-    combined_root = REPO / "data_precrop" / "new_benchmark_margin" / "train"
     for domain in ("newbench", "new_benchmark_2"):
         source = by_name[domain]
         configured_frames = repo_path(source["frames"])
-        if configured_frames.is_dir():
-            found, source_audit = discover_labeled_source(
-                domain, configured_frames, repo_path(source["labels"]), frames_per_video
-            )
-            source_audit["layout"] = "config flat frames"
-            source_audit["frame_root"] = str(configured_frames)
-        elif combined_root.is_dir():
-            found, source_audit = discover_combined_labeled_source(
-                domain, combined_root, repo_path(source["labels"]), frames_per_video
-            )
-            source_audit["configured_frame_root"] = str(configured_frames)
-        else:
-            raise FileNotFoundError(
-                f"{domain} frame root does not exist: {configured_frames}; "
-                f"combined fallback also missing: {combined_root}"
-            )
+        found, source_audit = discover_labeled_source(
+            domain, configured_frames, repo_path(source["labels"]), frames_per_video
+        )
+        source_audit["layout"] = "config flat frames"
+        source_audit["frame_root"] = str(configured_frames)
         records.extend(found)
         source_audit["training_fake_only"] = bool(source.get("fake_only", False))
         audit[domain] = source_audit

@@ -31,6 +31,13 @@ fake lists:         [5,499, 5,731, 5,744, 5,742, 5,744, 5,742, 19,041]
 logical sources:    9 = real + SBI + six FF++ fakes + one merged extra fake
 ```
 
+XM batching is planned at the global-batch level under DDP. With the default
+global batch of 40 and nine logical sources, the loader obtains five candidate
+items per rank, assigns four examples to every source (36 total), assigns the
+remaining four positions to four randomly selected sources, and then gives
+each of four GPUs ten examples. Thus every global batch has per-source counts
+of four or five instead of four unrelated local balancing decisions.
+
 The loader accepts crop-local `(81,2)` or `(1,81,2)` landmarks and never
 requires Retina files.
 

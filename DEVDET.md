@@ -22,6 +22,18 @@ from all three datasets.
 Run from the project root. The stages are resumable through their saved files,
 but each individual stage currently starts from the beginning when invoked.
 
+The end-to-end launcher automatically reuses a completed selection and then
+trains FFDev, fits DoseDict, trains DAFT, and evaluates the non-fine-tuned
+baseline detector plus every configured DAFT epoch into separate directories:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 bash run_devdet_pipeline.sh 0.7
+CUDA_VISIBLE_DEVICES=1 bash run_devdet_pipeline.sh 0.9
+```
+
+Set `SELECT_MODE=always` to rebuild selection or `SELECT_MODE=skip` to require
+the existing selection artifacts without checking them in the launcher.
+
 ```bash
 CUDA_VISIBLE_DEVICES=0 python src/train_devdet.py select \
   --batch-size 64 --num-workers 8
@@ -52,6 +64,22 @@ CUDA_VISIBLE_DEVICES=4 python src/eval_devdet_crossdomain.py \
 
 This reports `ALL`: every labeled video is included and videos without crops
 receive score 0.5.
+
+Prepare all 2,036 published eval2024 videos with four GPUs before evaluation:
+
+```bash
+for GPU in 0 1 2 3; do
+  CUDA_VISIBLE_DEVICES=$GPU python src/prep/prep_eval2024.py \
+    --part $((GPU + 1))/4 > "prep_eval2024_part$((GPU + 1)).log" 2>&1 &
+done
+wait
+```
+
+This writes the evaluator defaults, `data/2024/frames/` and
+`data/2024/labels.csv`. By default both published `train` and `test` metadata
+partitions are included. Use `--split test` only for the 815-video held-out
+subset. The operation is resumable through one `.complete` marker per video;
+pass `--overwrite` to recreate existing crops.
 
 To evaluate the original baseline detector with FFDev and DoseDict, without
 loading the DAFT detector, add `--detector-mode baseline`. Its default output

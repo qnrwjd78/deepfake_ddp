@@ -1,12 +1,7 @@
 # Datasets and generated artifacts
 /data/
 /data_precrop/*
-!/data_precrop/newbench_1/
-/data_precrop/newbench_1/*
-!/data_precrop/newbench_1/labels.csv
-!/data_precrop/newbench_2/
-/data_precrop/newbench_2/*
-!/data_precrop/newbench_2/labels.csv
+!/data/FaceForensics/*
 /output/
 /.cache/
 
